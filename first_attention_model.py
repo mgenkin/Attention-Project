@@ -104,7 +104,7 @@ if __name__ == '__main__':
     # regular pygame initializations
     pygame.init()
     screen = pygame.display.set_mode(SIZE)
-    pygame.display.set_caption("Neural Net Attention Model")
+    pygame.display.set_caption("First Attention Model")
     done = False
     clock = pygame.time.Clock()
      
