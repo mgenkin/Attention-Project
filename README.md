@@ -4,17 +4,15 @@
 
 ##### Code
 
-The non-learning (`first_attention_model.py`) file depends on pygame and numpy
+The non-learning `first_attention_model.py` file depends on pygame and numpy.
 
-The neural net (`first_attetion_model_nn.py`) file depends on pygame, numpy, theano, lasagne.
+The neural net `first_attention_model_nn.py` file depends on pygame, numpy, theano, lasagne.
 
 The agent's "sight" is modeled as follows:
 
-The 180-degree angle around the direction the agent is facing is divided into bins
+The 180-degree angle around the direction the agent is facing is divided into bins.
 
-For each bin, we receive an input value that corresponds to the inverse distance (closeness) of the closest obstacle in that direction
-
-Then, the agent chooses a non-learning
+For each bin, we receive an input value that corresponds to the inverse distance (closeness) of the closest obstacle in that direction.
 
 In the non-learning model, the agent simply chooses a direction to move in that's at right angles to the direction of the closest obstacle.
 
