@@ -16,7 +16,7 @@ For each bin, we receive an input value that corresponds to the inverse distance
 
 In the non-learning model, the agent simply chooses a direction to move in that's at right angles to the direction of the closest obstacle.
 
-In the learning model, the agent incurs a cost that corresponds to the closeness to the closest obstacle, and a neural network is trained to predict that cost.  The input to the network is the agent's vision (`views`) and the direction (encoded as a one-hot vector), concatenated into one vector.  Then the model is used to predict possible cost for each direction choice, and the direction with minimum predicted cost is chosen.
+In the learning model, the agent incurs a cost that corresponds to the closeness to the closest obstacle, and a neural network is trained to predict that cost.  The input to the network is the agent's vision (`views`) and the direction (encoded as a one-hot vector), concatenated into one vector.  Then the model is used to predict cost for each direction choice, and the direction with minimum predicted cost is chosen.
 
 ##### =)
 
