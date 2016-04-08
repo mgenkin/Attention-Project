@@ -31,13 +31,6 @@ class Obstacle(pygame.sprite.Sprite):
         adj_verts = [(vertices[i-1],vertices[i]) for i in range(4)]
         return adj_verts
 
-    # def draw(self, surface, color=GREY, border_color=RED):
-    #     tl_x, tl_y = self.top_left
-    #     s_x, s_y = self.size
-    #     # draw the border
-    #     pygame.draw.rect(surface, border_color, [tl_x, tl_y, s_x, s_y], 2)
-    #     # fill the inside
-    #     surface.fill(color, rect=[tl_x+2, tl_y+2, s_x-3, s_y-3])
 
 
 class ParkingLot():
