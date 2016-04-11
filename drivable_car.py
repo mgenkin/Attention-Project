@@ -103,7 +103,6 @@ class Car(pygame.sprite.Sprite) :
     # Side Must be Bat.LEFT or Bat.RIGHT
     def __init__(self, size, loc, color=BLUE) :
         pygame.sprite.Sprite.__init__(self)
-        screen = pygame.display.get_surface()
         self.image = pygame.Surface(size)
         self.image.fill(color)
         self.rect = self.image.get_rect()
@@ -111,12 +110,19 @@ class Car(pygame.sprite.Sprite) :
         self.rect.center = loc
 
     def update(self) :
-        self.rect.move_ip(self.to_xy(self.vel[0], self.vel[1]))
+        screen = pygame.display.get_surface()
+        [x_bound,y_bound] = screen.get_size()
+        [dx,dy]=self.to_xy(self.vel[0], self.vel[1])
+        if self.rect.right+dx>x_bound or self.rect.left+dx<0:
+            dx=0
+        if self.rect.bottom+dy>y_bound or self.rect.top+dy<0:
+            dy=0
+        self.rect.move_ip([dx,dy])
         pygame.event.pump()
 
     def to_xy(self, r, theta):
-        x = int(r*np.cos(theta))
-        y = int(r*np.sin(theta))
+        x = int(r*np.cos(math.pi*theta/180))
+        y = int(r*np.sin(math.pi*theta/180))
         return (x, y)
 
     def update_vel(self, acc):
@@ -130,7 +136,9 @@ class Car(pygame.sprite.Sprite) :
 def main() :
     #Initialize Screen
     pygame.init()
-    screen = pygame.display.set_mode((640,480))
+    screen_w=640
+    screen_h=480
+    screen = pygame.display.set_mode([screen_w,screen_h])
     pygame.display.set_caption("Drive Me!")
 
     #Initialize and Fill Background
@@ -163,24 +171,13 @@ def main() :
     while True :
         clock.tick(40) 
         update = np.zeros(2)
-        for event in pygame.event.get() :
-            if event.type == QUIT :
-                sys.exit(1)
-            if event.type == KEYDOWN:
-                if event.key == K_UP :
-                    update[0] += 1
-                if event.key == K_DOWN :
-                    update[0] += -1
-                if event.key == K_RIGHT :
-                    update[1] += 1
-                if event.key == K_LEFT :
-                    update[1]+= -1
-                state=1
-                update_last=update
-            if event.type == KEYUP:
-                state=0
-        if state==1:
-            update=update_last
+        for event in pygame.event.get():
+        	if event.type==pygame.QUIT:sys.exit()
+        keys=pygame.key.get_pressed()
+        if keys[pygame.K_UP]:update[0] += 1
+        if keys[pygame.K_DOWN]:update[0] += -1
+        if keys[pygame.K_RIGHT]:update[1] += 5
+        if keys[pygame.K_LEFT]:update[1] += -5        
         player1.update_vel(update)
         screen.blit(background, ball.rect, ball.rect)
         screen.blit(background, player1.rect, player1.rect)
@@ -193,23 +190,3 @@ def main() :
 
 if __name__ == "__main__" :
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
