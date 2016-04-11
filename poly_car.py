@@ -63,7 +63,7 @@ class Car(object):
         vel_theta = self.vel[1]
         s_x = self.size[0]
         c_x, c_y = self.center
-        disp_x, disp_y = self.to_xy((s_x, vel_theta))
+        disp_x, disp_y = self.to_xy((s_x/2.0, vel_theta))
         return [( int(c_x), int(c_y) ), ( int(c_x+disp_x), int(c_y+disp_y) )]
 
 if __name__ == '__main__':
@@ -76,7 +76,7 @@ if __name__ == '__main__':
     done = False
 
     # put the car in the center of the screen
-    car = Car((250, 250), (10, 20))
+    car = Car((250, 250), (20, 10))
     # start with zero acceleration
     acc = (0.0, 0.0)
     
