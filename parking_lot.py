@@ -12,9 +12,9 @@ class Obstacle(pygame.sprite.Sprite):
     def __init__(self, size, color=GREY) :
         pygame.sprite.Sprite.__init__(self)
         screen = pygame.display.get_surface()
-        self.surf = pygame.Surface(size)
-        self.surf.fill(color)
-        self.rect = self.surf.get_rect()
+        self.image = pygame.Surface(size)
+        self.image.fill(color)
+        self.rect = self.image.get_rect()
 
     def adjacent_vertices(self):
         # we will need adjacent vertex pairs later,
@@ -57,7 +57,7 @@ class ParkingLot():
                 if obst != None: # there is an obstacle in this parking space
                     # set car's location and draw it
                     obst.topleft = (x,y)
-                    self.area.blit(obst.surf, (x,y))
+                    self.area.blit(obst.image, (x,y))
                 # either way, draw a red rectangle to indicate a parking space
                 pygame.draw.rect(self.area, RED, (x,y)+self.car_size, 2)
         return self.area
