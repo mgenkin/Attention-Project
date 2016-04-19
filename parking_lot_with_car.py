@@ -8,7 +8,7 @@ GREEN = (50, 200, 100)
 RED = (200, 50, 100)
 WHITE = (255, 255, 255)
 
-MARGIN, COLUMNS, CARS_PER_COL = 100, 2, 6
+MARGIN, COLUMNS, CARS_PER_COL = 10, 2, 6
 CAR_SIZE = (100, 50)
 
 def bw_cmap(fl, lowcol=WHITE, hicol=BLACK):
@@ -28,21 +28,40 @@ class Car(object):
         self.unitvel = (1.0, vel[1]) # this is convenient for collision detection in case speed is zero
         self.center = location
         self.size = size
+        self.theta_moving = 0
 
     def accelerate(self, acc):
         # adds acceleration to velocity vector
         acc_r, acc_theta = acc
         vel_r, vel_theta = self.vel
-
-        vel_r_new = (0.9 * vel_r) + acc_r # multiply by 0.9 for friction
+        vel_r_new = (0.98 * vel_r) + acc_r # multiply by 0.9 for friction
         vel_theta_new = vel_theta + acc_theta
+        #if the car is moving, this stores the direction it moves in
+        if abs(vel_r_new)>.01:
+            self.theta_moving=vel_theta_new
+        #if the car is NOT moving, it doesn't allow the car to rotate the 
+        #wheels more than .7 rad, and doesn't align the car with the wheels
+        #still not a really good fix for the spinning in place at all though
+        if abs(vel_theta_new-self.theta_moving)>.7:
+            vel_theta_new = self.theta_moving+np.sign(vel_theta_new-self.theta_moving)*.7
         self.vel = (vel_r_new, vel_theta_new)
         self.unitvel = (1.0, vel_theta_new)
 
     def move(self):
         # moves the center based on the velocity
+        #Also doesn't let the center of the car
+        #leave the screen. It just stops it. 
+        #Also, not super elegant.
+        screen = pygame.display.get_surface()
+        [x_bound,y_bound] = screen.get_size()
         vel_x, vel_y = self.to_xy(self.vel)
         c_x, c_y = self.center
+        if c_x+vel_x>x_bound or c_x+vel_x<0:
+            vel_x=0
+            self.vel[0]=(0,self.vel[1])
+        if c_y+vel_y>y_bound or c_y+vel_y<0:
+            vel_y=0
+            self.vel=(0,self.vel[1])
         self.center = (c_x + vel_x, c_y + vel_y)
 
     def to_xy(self, r_theta):
@@ -59,7 +78,7 @@ class Car(object):
         s_x, s_y = self.size
         half_diag = ((s_x / 2.0)**2 + (s_y / 2.0)**2)**(0.5) # pythagorean theorem
         c_x, c_y = self.center
-        vel_theta = self.vel[1] # we face the car in the direction of the velocity vector
+        vel_theta = self.theta_moving # we face the car in the direction the car last moved
         
         vert_angle = np.arctan2(s_y, s_x); #signed angle from front to first vertex
         angles = [vert_angle, np.pi-vert_angle, vert_angle-np.pi, -vert_angle] # angles from front to each vertex
@@ -182,18 +201,24 @@ class ParkingLot():
         self.columns = columns
         self.margin = margin
         self.cars_per_col = cars_per_col
-        w = (2*margin+car_size[0])*columns
-        h = car_size[1]*cars_per_col+2*margin
-        self.size = (w,h)
+        #margin is the space between the car and the objects we want it to be moving past
+        #Each column has a car's width of space on either side, with margins
+        #the tops and bottoms are 1.5 car widths wide, to allow for turning the car around
+        #the tops of the columns. The parking spaces are 1.3:1 of the cars dimensions. 
+        #which is all approximately based on real car dimensions. 
+        w = (4*margin+1.3*car_size[0]+2*car_size[1])*columns
+        h = (1.3*cars_per_col+3)*car_size[1]
+        self.size = (int(w),int(h))
 
     def make_obstacles(self):
         obstacles = []
         diff_x, diff_y = self.car_size[0]/2.0, self.car_size[1]/2.0 # to adjust from top left corner to center of car
         for col in range(self.columns):
             # loop over x,y of parking spaces
-            x = self.margin+(col*(2*self.margin+self.car_size[0]))
+            x_offset = 2*self.margin+self.car_size[1]+.15*self.car_size[0]
+            x = x_offset+col*(1.15*self.car_size[0]+2+2*self.margin+self.car_size[1]+x_offset)
             for i in range(self.cars_per_col):
-                y = self.margin + i*self.car_size[1] # bottom margin plus the height of the cars we've passed
+                y = 1.65*self.car_size[1]+i*1.3*self.car_size[1] # bottom margin plus the height of the cars we've passed
                 if np.random.random()>0.5: # randomly decide if there will be an obstacle
                     obst = Car((x+diff_x, y+diff_y), CAR_SIZE, (0.0, 0.0))
                     obstacles.append(obst)
@@ -203,10 +228,11 @@ class ParkingLot():
         surface.fill(color)
         for col in range(self.columns):
             # draw column of spaces, they are all aligned in the x direction
-            x = self.margin+(col*(2*self.margin+self.car_size[0]))
+            x_offset = 2*self.margin+self.car_size[1]
+            x = x_offset+col*(1.3*self.car_size[0]+2*self.margin+self.car_size[1]+x_offset)
             for i in range(self.cars_per_col):
-                y = self.margin + i*self.car_size[1] # bottom margin plus the height of the cars we've passed
-                pygame.draw.rect(surface, RED, (x,y)+self.car_size, 2)
+                y = 1.5*self.car_size[1]+i*1.3*self.car_size[1] # turning space on top plus the height of the cars we've passed
+                pygame.draw.rect(surface, RED, (x,y)+(1.3*self.car_size[0],1.3*self.car_size[1]), 2)
         return
 
 if __name__ == '__main__':
@@ -239,13 +265,13 @@ if __name__ == '__main__':
             elif event.type == pygame.KEYDOWN:
                 # Adjust speed if an arrow key is down
                 if event.key == pygame.K_LEFT:
-                    acc = (acc[0], -(np.pi/32.0)) # turn left
+                    acc = (acc[0], -(np.pi/45.0)) # turn left
                 elif event.key == pygame.K_RIGHT:
-                    acc = (acc[0], (np.pi/32.0)) # turn right
+                    acc = (acc[0], (np.pi/45.0)) # turn right
                 if event.key == pygame.K_UP:
-                    acc = (0.5, acc[1]) # speed up
+                    acc = (0.1, acc[1]) # speed up
                 elif event.key == pygame.K_DOWN:
-                    acc = (-0.5, acc[1]) # slow down
+                    acc = (-0.1, acc[1]) # slow down
             elif event.type == pygame.KEYUP:
                 if event.key == pygame.K_UP or event.key == pygame.K_DOWN:
                     acc = (0.0, acc[1]) # stop accelerating
