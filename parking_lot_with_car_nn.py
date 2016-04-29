@@ -1,5 +1,9 @@
 import numpy as np
 import pygame
+import theano
+import theano.tensor as T
+import lasagne
+import time
 
 BLACK = (0,0,0)
 GREY = (100, 100, 100)
@@ -8,8 +12,10 @@ GREEN = (50, 200, 100)
 RED = (200, 50, 100)
 WHITE = (255, 255, 255)
 
-MARGIN, COLUMNS, CARS_PER_COL = 100, 2, 6
+MARGIN, COLUMNS, CARS_PER_COL = 10, 2, 6
 CAR_SIZE = (100, 50)
+ANGLEBINS = 100
+BATCHSIZE = 100
 
 def bw_cmap(fl, lowcol=WHITE, hicol=BLACK):
     # returns an interpolation of lowcol and hicol by fl (between zero and one)
@@ -20,7 +26,8 @@ class Car(object):
         Meant to draw using pygame's pygame.draw.polygon function, no rects involved
         Velocity and acceleration are stored in polar form, but center is in cartesian
         None of these are required to be ints, but the output of get_pointlist is converted to int for drawing
-         Functions: accelerate, move, to_xy, get_pointlist
+        Also implements collision detection, which simply detects if a point of one polygon is inside the other
+         Functions: accelerate, move, to_xy, inside, collision, draw, get_pointlist
          Attributes: center, vel, size, unitvel
     """
     def __init__(self, location, size, vel):
@@ -28,21 +35,40 @@ class Car(object):
         self.unitvel = (1.0, vel[1]) # this is convenient for collision detection in case speed is zero
         self.center = location
         self.size = size
+        self.theta_moving = 0
 
     def accelerate(self, acc):
         # adds acceleration to velocity vector
         acc_r, acc_theta = acc
         vel_r, vel_theta = self.vel
-
-        vel_r_new = (0.9 * vel_r) + acc_r # multiply by 0.9 for friction
+        vel_r_new = (0.98 * vel_r) + acc_r # multiply by 0.9 for friction
         vel_theta_new = vel_theta + acc_theta
+        #if the car is moving, this stores the direction it moves in
+        if abs(vel_r_new)>.01:
+            self.theta_moving=vel_theta_new
+        #if the car is NOT moving, it doesn't allow the car to rotate the 
+        #wheels more than .7 rad, and doesn't align the car with the wheels
+        #still not a really good fix for the spinning in place at all though
+        if abs(vel_theta_new-self.theta_moving)>.7:
+            vel_theta_new = self.theta_moving+np.sign(vel_theta_new-self.theta_moving)*.7
         self.vel = (vel_r_new, vel_theta_new)
         self.unitvel = (1.0, vel_theta_new)
 
     def move(self):
         # moves the center based on the velocity
+        #Also doesn't let the center of the car
+        #leave the screen. It just stops it. 
+        #Also, not super elegant.
+        screen = pygame.display.get_surface()
+        [x_bound,y_bound] = screen.get_size()
         vel_x, vel_y = self.to_xy(self.vel)
         c_x, c_y = self.center
+        if c_x+vel_x>x_bound or c_x+vel_x<0:
+            vel_x=0
+            self.vel=(0,self.vel[1])
+        if c_y+vel_y>y_bound or c_y+vel_y<0:
+            vel_y=0
+            self.vel=(0,self.vel[1])
         self.center = (c_x + vel_x, c_y + vel_y)
 
     def to_xy(self, r_theta):
@@ -59,7 +85,7 @@ class Car(object):
         s_x, s_y = self.size
         half_diag = ((s_x / 2.0)**2 + (s_y / 2.0)**2)**(0.5) # pythagorean theorem
         c_x, c_y = self.center
-        vel_theta = self.vel[1] # we face the car in the direction of the velocity vector
+        vel_theta = self.theta_moving # we face the car in the direction the car last moved
         
         vert_angle = np.arctan2(s_y, s_x); #signed angle from front to first vertex
         angles = [vert_angle, np.pi-vert_angle, vert_angle-np.pi, -vert_angle] # angles from front to each vertex
@@ -114,7 +140,23 @@ class Car(object):
         disp_x, disp_y = self.to_xy((s_x/2.0, vel_theta))
         return [( int(c_x), int(c_y) ), ( int(c_x+disp_x), int(c_y+disp_y) )]
 
+class ParkingSpace(Car):
+    """ A parking space, same as a car
+    """
+    def __init__(self, location, size, vel):
+        super(ParkingSpace,self).__init__(location, size, vel)
+
+    def draw(self, surface, car_color=BLUE):
+        # draw the car on the surface
+        # draw the rectangle
+        pl = self.pointlist()
+        pygame.draw.polygon(surface, car_color, pl) 
+
 class Agent(Car):
+    """ The agent, contains functionality for moving and computing "vision" vector.
+        Subclasses the Car class.
+         Functions: signed_angle, views
+    """
     
     def __init__(self, location, size, vel, num_anglebins):
         Car.__init__(self, location, size, vel)
@@ -176,38 +218,137 @@ class Agent(Car):
         return views[num/2:num+num/2], [i+(4*np.pi/num) for i in bins[num/2:num+num/2]]
 
 class ParkingLot():
+    """ Builds a parking lot and draws it, with parking spaces.
+        Has a function to generate stationary car-sized obstacles in some of the parking spaces
+         Functions: make_obstacles, draw
+         Attributes: car_size, columns, margin, cars_per_col, size
 
+    """
     def __init__(self, margin=100, columns=2, cars_per_col=6, car_size=CAR_SIZE):
         self.car_size = car_size
         self.columns = columns
         self.margin = margin
         self.cars_per_col = cars_per_col
-        w = (2*margin+car_size[0])*columns
-        h = car_size[1]*cars_per_col+2*margin
-        self.size = (w,h)
+        #margin is the space between the car and the objects we want it to be moving past
+        #Each column has a car's width of space on either side, with margins
+        #the tops and bottoms are 1.5 car widths wide, to allow for turning the car around
+        #the tops of the columns. The parking spaces are 1.3:1 of the cars dimensions. 
+        #which is all approximately based on real car dimensions. 
+        w = (4*margin+1.3*car_size[0]+2*car_size[1])*columns
+        h = (1.3*cars_per_col+3)*car_size[1]
+        self.size = (int(w),int(h))
 
     def make_obstacles(self):
         obstacles = []
+        spaces = []
         diff_x, diff_y = self.car_size[0]/2.0, self.car_size[1]/2.0 # to adjust from top left corner to center of car
         for col in range(self.columns):
             # loop over x,y of parking spaces
-            x = self.margin+(col*(2*self.margin+self.car_size[0]))
+            x_offset = 2*self.margin+self.car_size[1]+.15*self.car_size[0]
+            x = x_offset+col*(1.15*self.car_size[0]+2+2*self.margin+self.car_size[1]+x_offset)
             for i in range(self.cars_per_col):
-                y = self.margin + i*self.car_size[1] # bottom margin plus the height of the cars we've passed
+                y = 1.65*self.car_size[1]+i*1.3*self.car_size[1] # bottom margin plus the height of the cars we've passed
                 if np.random.random()>0.5: # randomly decide if there will be an obstacle
                     obst = Car((x+diff_x, y+diff_y), CAR_SIZE, (0.0, 0.0))
                     obstacles.append(obst)
-        return obstacles
+                else:
+                    # make a parking space
+                    space = ParkingSpace((x+diff_x, y+diff_y), CAR_SIZE, (0.0, 0.0))
+                    spaces.append(space)
+        return obstacles, spaces
 
     def draw(self, surface, color=BLACK):
+        # draw the map on the surface
         surface.fill(color)
         for col in range(self.columns):
             # draw column of spaces, they are all aligned in the x direction
-            x = self.margin+(col*(2*self.margin+self.car_size[0]))
+            x_offset = 2*self.margin+self.car_size[1]
+            x = x_offset+col*(1.3*self.car_size[0]+2*self.margin+self.car_size[1]+x_offset)
             for i in range(self.cars_per_col):
-                y = self.margin + i*self.car_size[1] # bottom margin plus the height of the cars we've passed
-                pygame.draw.rect(surface, RED, (x,y)+self.car_size, 2)
+                y = 1.5*self.car_size[1]+i*1.3*self.car_size[1] # turning space on top plus the height of the cars we've passed
+                pygame.draw.rect(surface, RED, (x,y)+(1.3*self.car_size[0],1.3*self.car_size[1]), 2)
         return
+
+# LEARNING MODEL
+class NN(object):
+    """ General neural network class, based on theano and lasagne
+         Attributes: invar, outvar, inshape, outshape, batchsize, X, y, counter
+         Functions: build_network, build_training_functions, add_data, train, best_action
+    """
+    def __init__(self, inshape, outshape, batchsize):
+        self.inshape, self.outshape, self.batchsize = inshape, outshape, batchsize
+        self.invar = T.matrix()
+        self.outvar = T.vector()
+        self.lrvar = T.scalar()
+        self.build_network(inshape[0], outshape[0], input_var=self.invar)
+        self.build_training_functions(self.invar, self.outvar, self.lrvar)
+        self.X = np.zeros((batchsize,)+inshape)
+        self.y = np.zeros((batchsize,)+outshape)
+        self.counter = 0
+
+    def build_network(self, inshape, outshape, input_var = None):
+        # create neural network in lasagne, check out lasagne's mnist example if this is weird
+        # or just skip it for now =)
+        print inshape
+        l_in = lasagne.layers.InputLayer(shape=(None, inshape),
+                                         input_var=input_var)
+        l_hid1 = lasagne.layers.DenseLayer(
+                l_in, num_units=inshape,
+                nonlinearity=lasagne.nonlinearities.rectify,
+                W=lasagne.init.GlorotUniform())
+        l_out = lasagne.layers.DenseLayer(
+                l_hid1, num_units=outshape,
+                nonlinearity=lasagne.nonlinearities.sigmoid)
+        self.nn = l_out
+
+    def build_training_functions(self, input_var, target_var, lr_var):
+        # compile training functions with learning rate
+        network = self.nn
+        prediction = lasagne.layers.get_output(network)
+        loss = lasagne.objectives.binary_crossentropy(prediction, target_var)
+        loss = loss.mean()
+
+        params = lasagne.layers.get_all_params(network, trainable=True)
+        updates = lasagne.updates.nesterov_momentum(
+                loss, params, learning_rate=lr_var, momentum=0.9)
+
+        test_prediction = lasagne.layers.get_output(network, deterministic=True)
+
+        self.train_fn = theano.function([input_var, target_var, lr_var], loss, updates=updates)
+        self.pred_fn = theano.function([input_var], test_prediction)
+
+    def add_data(self, x, y):
+        # add the training data for the neural network
+        # the counter goes from 0 to self.batchsize over and over again, updating the same minibatch
+        counter = self.counter
+        self.X[counter, ...] = x
+        self.y[counter, ...] = y
+        counter += 1
+        counter %= self.batchsize
+        self.counter=counter
+
+    def train(self):
+        # go once through the current batch
+        cost = self.train_fn(X, y)
+        return cost
+
+    def best_action(self, state, actionshape):
+        action = np.zeros(actionshape)
+        pred_cost = []
+        for i in range(actionshape):
+            # predict the cost of doing each action
+            action[i] = 1
+            pred_cost.append((action.copy(), self.pred_fn(np.concatenate((state, action))[np.newaxis,:])))
+            action[i] = 0
+        # output the action with minimum predicted cost
+        return min(pred_cost, key=lambda t: t[1])
+
+def cost(collision):
+    if collision: 
+        return -100.0
+    else:
+        # find intersection area with parking space
+        return 0.0
 
 if __name__ == '__main__':
 
@@ -222,35 +363,28 @@ if __name__ == '__main__':
     done = False
 
     # put the car in the center of the screen
-    main_car = Agent((250, 250), CAR_SIZE, (0.0, 0.0), 100)
+    main_car = Agent((250, 250), CAR_SIZE, (0.0, 0.0), ANGLEBINS)
     # start with zero acceleration
     acc = (0.0, 0.0)
 
-    # put some cars in the parking lot
-    obstacles = parking_lot.make_obstacles()
+    # put some cars and empty spaces
+    obstacles, spaces = parking_lot.make_obstacles()
+
+    # initialize the neural network
+    nn = NN((3*ANGLEBINS,), (1,), BATCHSIZE)
 
     while not done:
 
-        # --- Event Processing
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                # exits if the window is closed
-                done = True
-            elif event.type == pygame.KEYDOWN:
-                # Adjust speed if an arrow key is down
-                if event.key == pygame.K_LEFT:
-                    acc = (acc[0], -(np.pi/32.0)) # turn left
-                elif event.key == pygame.K_RIGHT:
-                    acc = (acc[0], (np.pi/32.0)) # turn right
-                if event.key == pygame.K_UP:
-                    acc = (0.5, acc[1]) # speed up
-                elif event.key == pygame.K_DOWN:
-                    acc = (-0.5, acc[1]) # slow down
-            elif event.type == pygame.KEYUP:
-                if event.key == pygame.K_UP or event.key == pygame.K_DOWN:
-                    acc = (0.0, acc[1]) # stop accelerating
-                if event.key == pygame.K_LEFT or event.key == pygame.K_RIGHT:
-                    acc = (acc[0], 0.0) # stop turning
+        # get car's vision input and angles for turning
+        views, angles = main_car.views(obstacles)
+        # get the action with minimum predicted cost from neural network
+        action, pred_cost = nn.best_action(views, 2*ANGLEBINS)
+        # the action is an array of size 2*ANGLEBINS
+        # the first ANGLEBINS indicates moving forward in that direction
+        # the second ANGLEBINS indicates moving backward in that direction
+        act_one = np.argmax(action)
+        theta_ind, dir_ind = act_one%BATCHSIZE, act_one/BATCHSIZE
+        acc = (dir_ind if dir_ind>0 else -1), angles[theta_ind]
 
         # update our car
         main_car.accelerate(acc)
@@ -258,9 +392,9 @@ if __name__ == '__main__':
         # collision detection:
         collision = False
         for obst in obstacles:
+            # collision with each obstacle
             if main_car.collision(obst):
                 collision = True
-
 
         # --- Drawing
         parking_lot.draw(screen) # draw the parking lot
@@ -268,13 +402,15 @@ if __name__ == '__main__':
         # draw the obstacles
         for obst in obstacles:
             obst.draw(screen)
+        # draw the parking spaces
+        for space in spaces:
+            space.draw(screen)
         # daw a red rectangle if there's a collision
         if collision:
-            pygame.draw.rect(screen, RED, [0,0,50,50])
+            pygame.draw.rect(screen, RED, [parking_lot.size[0]-50,0,50,50])
 
         # Visualize the views with black/white squares on the top left
         # the closer the obstacle, the darker the square will be
-        views, angles = main_car.views(obstacles)
         pygame.draw.rect(screen, BLUE, [0, 0, (2*len(views))+5, 15])
         for i, threat in enumerate(views):
             #   print threat, "threat"
@@ -284,6 +420,10 @@ if __name__ == '__main__':
 
         # update the screen
         pygame.display.flip()
+
+        # record the data 
+        true_cost = cost(collision)
+        nn.add_data(np.concatenate((views,action)), true_cost)
 
     # Close everything down
     pygame.quit()
