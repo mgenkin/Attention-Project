@@ -58,7 +58,7 @@ class Car(object):
         c_x, c_y = self.center
         if c_x+vel_x>x_bound or c_x+vel_x<0:
             vel_x=0
-            self.vel[0]=(0,self.vel[1])
+            self.vel=(0,self.vel[1])
         if c_y+vel_y>y_bound or c_y+vel_y<0:
             vel_y=0
             self.vel=(0,self.vel[1])
