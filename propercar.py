@@ -6,7 +6,10 @@ GREY = (100, 100, 100)
 BLUE = (100, 50, 200)
 GREEN = (50, 200, 100)
 RED = (200, 50, 100)
-ACC = .1
+ACC_r = .1
+ACC_t = np.pi/30
+Fric = .98
+
 
 
 class Car(object):
@@ -17,38 +20,52 @@ class Car(object):
          Functions: accelerate, move, to_xy, get_pointlist
          Attributes: center, vel, size, unitvel
     """
+    # size is length,width
     def __init__(self, location, size, vel):
         self.vel = vel
         self.unitvel = (1.0, vel[1]) # this is convenient for collision detection in case speed is zero
         self.center = location
         self.size = size
-        self.theta_moving = 0
+        self.pointing = 0
 
-    def accelerate(self, acc):
-        # adds acceleration to velocity vector
-        acc_r, acc_theta = acc
+    def move(self,acc):
+        # Moves the car to it's new location, find the angle it's heading, based
+        # on the current velocity, and the user inputted acceleration.
+        c_x, c_y = self.center
+        heading = self.pointing
         vel_r, vel_theta = self.vel
-        vel_r_new = (0.98 * vel_r) + acc_r # multiply by 0.9 for friction
-        vel_theta_new = vel_theta + acc_theta   
-        if abs(vel_r_new)>.1:
-            self.theta_moving=vel_theta_new
-        if abs(vel_theta_new-self.theta_moving)>.7:
-            vel_theta_new = self.theta_moving+np.sign(vel_theta_new-self.theta_moving)*.7
+        acc_r, acc_theta = acc
+        v_r_new = (Fric * vel_r) + acc_r # Fric is global parameter for friction
+        v_t_new = .85*vel_theta + acc_theta   
+        self.vel = (v_r_new,v_t_new)
+        self.unitvel = (1.0, vel[1])
 
-        self.vel = (vel_r_new, vel_theta_new)
-        self.unitvel = (1.0, vel_theta_new)
+        # Locate the front and back "wheel" of the car
+        front = np.asarray([c_x,c_y])+self.size[0]*np.asarray([np.cos(heading),np.sin(heading)])
+        back = np.asarray([c_x,c_y])-self.size[0]*np.asarray([np.cos(heading),np.sin(heading)])
 
-    def move(self):
-        # moves the center based on the velocity
+        #back wheel just keeps going along the direction of the car's movement, front wheel
+        #goes in the direction the car's pointing+tire turned direction
+        front = front+v_r_new*np.asarray([np.cos(heading+v_t_new),np.sin(heading+v_t_new)])        
+        back = back+v_r_new*np.asarray([np.cos(heading),np.sin(heading)])
+        #New center is just the average of the front and back in their new positions
+        c_x_n, c_y_n = (front+back)/2
+        #The arctan function only uses half of the available 360 deg, so this phase factor
+        #extends it into the full 360. I think I could use arctan2 for this? I'm not sure
+        #how to use that....
+        phase=0 
+        if ((front[1]-back[1])<0 and (front[0]-back[0])<0) or (front[0]-back[0]<0 and (front[1]-back[1])>0):
+            phase=np.pi
+        #From the position of the front and back you can get the direction the car is pointing
+        self.pointing = np.arctan((front[1]-back[1])/(front[0]-back[0]))+phase
+
         screen = pygame.display.get_surface()
         [x_bound,y_bound] = screen.get_size()
-        vel_x, vel_y = self.to_xy(self.vel)
-        c_x, c_y = self.center
-        if c_x+vel_x>x_bound or c_x+vel_x<0:
-            vel_x=0
-        if c_y+vel_y>y_bound or c_y+vel_y<0:
-            vel_y=0
-        self.center = (c_x + vel_x, c_y + vel_y)
+        if c_x_n>x_bound or c_x_n<0:
+            c_x_n = c_x
+        if c_y_n>y_bound or c_y_n<0:
+            c_y_n = c_y
+        self.center = (c_x_n, c_y_n)
 
 
     def to_xy(self, r_theta):
@@ -65,12 +82,14 @@ class Car(object):
         s_x, s_y = self.size
         half_diag = ((s_x / 2.0)**2 + (s_y / 2.0)**2)**(0.5) # pythagorean theorem
         c_x, c_y = self.center
-        vel_theta = self.theta_moving # we face the car in the direction of the velocity vector
+
+        pointing = self.pointing
+
         vert_angle = np.arctan2(s_y, s_x); #signed angle from front to first vertex
         angles = [vert_angle, np.pi-vert_angle, vert_angle-np.pi, -vert_angle] # angles from front to each vertex
         points = []
         for ang in angles:
-            disp_x, disp_y = self.to_xy((half_diag, vel_theta+ang)) # displacement from center to vertex
+            disp_x, disp_y = self.to_xy((half_diag, pointing+ang)) # displacement from center to vertex
             points.append( (int(c_x + disp_x), int(c_y + disp_y)) )
         return points
 
@@ -113,7 +132,7 @@ class Car(object):
     def to_midfront(self):
         # gives a list containing the center and the midpoint of the front side
         # I use this to draw the blue line so you can see which way the car is turned
-        vel_theta = self.vel[1]
+        vel_theta = self.pointing
         s_x = self.size[0]
         c_x, c_y = self.center
         disp_x, disp_y = self.to_xy((s_x/2.0, vel_theta))
@@ -147,14 +166,13 @@ if __name__ == '__main__':
         for event in pygame.event.get():
             if event.type == pygame.QUIT: done=True
         keys=pygame.key.get_pressed()
-        if keys[pygame.K_UP]:acc[0] += ACC
-        if keys[pygame.K_DOWN]:acc[0] += -ACC
-        if keys[pygame.K_RIGHT]:acc[1] += np.pi/45.0
-        if keys[pygame.K_LEFT]:acc[1] += -np.pi/45.0 
-        if abs(acc[1])>(np.pi*.7): acc[1] = np.sign(acc[1])*np.pi*.7
-        # update our car
-        main_car.accelerate(acc)
-        main_car.move()
+        if keys[pygame.K_UP]:acc[0] += ACC_r
+        if keys[pygame.K_DOWN]:acc[0] += -ACC_r
+        if keys[pygame.K_RIGHT]:acc[1] += ACC_t
+        if keys[pygame.K_LEFT]:acc[1] += -ACC_t
+
+        # update the position and speed of the car
+        main_car.move(acc)
         # collision detection:
         collision = False
         for obst in obstacles:
@@ -179,21 +197,3 @@ if __name__ == '__main__':
 
     # Close everything down
     pygame.quit()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
