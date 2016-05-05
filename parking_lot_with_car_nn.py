@@ -3,7 +3,7 @@ import pygame
 import theano
 import theano.tensor as T
 import lasagne
-import time
+import itertools
 
 BLACK = (0,0,0)
 GREY = (100, 100, 100)
@@ -174,13 +174,13 @@ class Agent(Car):
         else:
             return ang
 
-    def views(self, obstacles):
+    def views(self, obstacles, spaces):
         x,y  = self.to_midfront()[1] # compute distances from midpoint of front edge
         num = self.num
         views = np.zeros(num*2) # we compute views in 360 degrees, then throw away the back half
         bins = np.linspace(-np.pi, np.pi, num=2*num) # the bottoms of the angle bins
         # loop over obstacles
-        for obst in obstacles:
+        for obst in itertools.chain(obstacles, spaces):
             # loop over consecutive vertex pairs for each obstacle
             pl = obst.pointlist()
             for pl1,pl2 in [(pl[i-1], pl[i]) for i in range(len(pl))]:
@@ -211,9 +211,12 @@ class Agent(Car):
                     # count the closer one.
                     dist_current[bin2] = min(dist2, dist1)
                 # calculate our closeness function
-                closeness = ([np.exp(-d/500.0) if d!= 0.0 else 0.0 for d in dist_current])
+                if type(obst) is ParkingSpace: # it's a parking space
+                    closeness = ([np.exp(-d/500.0) if d!= 0.0 else 0.0 for d in dist_current])
+                else : # it's an empty space
+                    closeness = ([-np.exp(-d/500.0) if d!= 0.0 else 0.0 for d in dist_current])
                 # only add to the views things that are closer than what we already know is there (closer object obscure further ones)
-                views = np.array([max(v, c) for v, c in zip(views, closeness)])
+                views = np.array([max(v, c, key=lambda t:abs(t)) for v, c in zip(views, closeness)])
         # return the front half of the views, and angle centers for turning
         return views[num/2:num+num/2], [i+(4*np.pi/num) for i in bins[num/2:num+num/2]]
 
@@ -375,8 +378,13 @@ if __name__ == '__main__':
 
     while not done:
 
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                # exits if the window is closed
+                done = True
+
         # get car's vision input and angles for turning
-        views, angles = main_car.views(obstacles)
+        views, angles = main_car.views(obstacles, spaces)
         # get the action with minimum predicted cost from neural network
         action, pred_cost = nn.best_action(views, 2*ANGLEBINS)
         # the action is an array of size 2*ANGLEBINS
@@ -407,16 +415,16 @@ if __name__ == '__main__':
             space.draw(screen)
         # daw a red rectangle if there's a collision
         if collision:
-            pygame.draw.rect(screen, RED, [parking_lot.size[0]-50,0,50,50])
+            pygame.draw.rect(screen, RED, [parking_lot.size[0]-10,0,10,10])
 
         # Visualize the views with black/white squares on the top left
         # the closer the obstacle, the darker the square will be
         pygame.draw.rect(screen, BLUE, [0, 0, (2*len(views))+5, 15])
         for i, threat in enumerate(views):
             #   print threat, "threat"
-            pygame.draw.rect(screen, bw_cmap(threat), [i*2, 0, 2, 10])
+            pygame.draw.rect(screen, bw_cmap((threat+1.0)/2, hicol=GREEN, lowcol=RED), [i*2, 0, 2, 10])
         
-        clock.tick(60)
+        clock.tick(10)
 
         # update the screen
         pygame.display.flip()
